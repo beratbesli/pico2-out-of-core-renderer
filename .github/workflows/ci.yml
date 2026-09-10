@@ -73,11 +73,11 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          test -s release-assets/build/pico2_cube_demo.uf2
+          test -s release-assets/pico2_cube_demo.uf2
           gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
             gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
               --title "Pico 2 out-of-core renderer $GITHUB_REF_NAME" --generate-notes
           gh release upload "$GITHUB_REF_NAME" \
-            release-assets/build/pico2_cube_demo.uf2 \
-            release-assets/build/SHA256SUMS \
+            release-assets/pico2_cube_demo.uf2 \
+            release-assets/SHA256SUMS \
             --repo "$GITHUB_REPOSITORY" --clobber
