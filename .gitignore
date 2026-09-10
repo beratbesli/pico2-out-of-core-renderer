@@ -14,3 +14,5 @@ bin/
 .DS_Store
 *.swp
 *~
+tests/test_vmem_fb
+build/

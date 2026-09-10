@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  host-test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Build host test
+        run: make -C tests
+      - name: Run host test
+        run: ./tests/test_vmem_fb
+
+  pico-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - name: Install Pico build toolchain
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes cmake ninja-build gcc-arm-none-eabi libnewlib-arm-none-eabi
+      - name: Configure with pinned Pico SDK
+        run: >-
+          cmake -S pico2_cube_demo -B build -G Ninja
+          -DPICO_BOARD=pico2
+          -DPICO_SDK_FETCH_FROM_GIT=ON
+          -DPICO_SDK_FETCH_FROM_GIT_TAG=2.1.1
+      - name: Build firmware
+        run: cmake --build build --parallel
