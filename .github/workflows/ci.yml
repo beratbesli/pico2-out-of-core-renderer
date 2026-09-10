@@ -5,6 +5,7 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -35,3 +36,47 @@ jobs:
           -DPICO_SDK_FETCH_FROM_GIT_TAG=2.1.1
       - name: Build firmware
         run: cmake --build build --parallel
+
+      - name: Package UF2 release candidate
+        if: startsWith(github.ref, 'refs/tags/')
+        run: |
+          set -euo pipefail
+          test -s build/pico2_cube_demo.uf2
+          sha256sum build/pico2_cube_demo.uf2 > build/SHA256SUMS
+
+      - name: Upload UF2 release candidate
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: pico2-firmware
+          path: |
+            build/pico2_cube_demo.uf2
+            build/SHA256SUMS
+          if-no-files-found: error
+          retention-days: 14
+
+  publish-release:
+    name: Publish UF2 release assets
+    if: startsWith(github.ref, 'refs/tags/')
+    needs: [host-test, pico-build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: pico2-firmware
+          path: release-assets
+      - name: Publish CI-built UF2
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          test -s release-assets/build/pico2_cube_demo.uf2
+          gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1 || \
+            gh release create "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" \
+              --title "Pico 2 out-of-core renderer $GITHUB_REF_NAME" --generate-notes
+          gh release upload "$GITHUB_REF_NAME" \
+            release-assets/build/pico2_cube_demo.uf2 \
+            release-assets/build/SHA256SUMS \
+            --repo "$GITHUB_REPOSITORY" --clobber
