@@ -18,6 +18,27 @@
 
 #define VIEWPORT_WIDTH   80
 #define VIEWPORT_HEIGHT  32
+#define VMEM_BASE_SD_SECTOR 4096U
+
+static bool confirm_destructive_format(void) {
+    static const char expected[] = "ERASE\n";
+
+    printf("\n[WARNING] This demo will overwrite raw SD sectors starting at LBA %u.\n",
+           VMEM_BASE_SD_SECTOR);
+    printf("Use a dedicated test card or reserved raw region.\n");
+    printf("Type ERASE followed by Enter within 30 seconds to continue: ");
+
+    for (size_t i = 0; expected[i] != '\0'; i++) {
+        int received = getchar_timeout_us(30 * 1000 * 1000);
+        if (received < 0 || (char)received != expected[i]) {
+            printf("\n[SAFE STOP] Confirmation did not match; no SD sectors were written.\n");
+            return false;
+        }
+    }
+
+    printf("\n[WARNING] Confirmation accepted; formatting the reserved raw region.\n");
+    return true;
+}
 
 // Statically allocated in BSS (not on stack)
 static char terminal_buf[VIEWPORT_HEIGHT][VIEWPORT_WIDTH];
@@ -171,13 +192,27 @@ int main(void) {
         }
     }
 
-    // 4. Initialize Virtual Memory manager starting at SD sector 4096
-    vmem_init(4096);
+    // 4. Validate capacity before reserving the raw sector region.
+    sd_card_info_t sd_info = sd_get_info();
+    if (sd_info.capacity_sectors < VMEM_BASE_SD_SECTOR + VMEM_TOTAL_PAGES) {
+        printf("[ERROR] SD card is too small for the reserved virtual canvas.\n");
+        while (1) {
+            sleep_ms(1000);
+        }
+    }
 
-    // 5. Generate the 1,000,000 byte world onto the SD card
+    // 5. Initialize Virtual Memory manager starting at the reserved sector.
+    vmem_init(VMEM_BASE_SD_SECTOR);
+
+    // 6. Generate the 1,000,000 byte world only after explicit confirmation.
+    if (!confirm_destructive_format()) {
+        while (1) {
+            sleep_ms(1000);
+        }
+    }
     generate_massive_world();
 
-    // 6. Camera animation parameters
+    // 7. Camera animation parameters
     float cam_t = 0.0f;
     uint32_t frame_count = 0;
     uint32_t sys_hz = clock_get_hz(clk_sys);

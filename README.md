@@ -1,76 +1,74 @@
-# Pico 2 (RP2350) Out-of-Core Virtual Memory 3D Render Engine
+# Pico 2 out-of-core renderer
 
-Raspberry Pi Pico 2 (RP2350) mikrodenetleyicisi ve SPI0 üzerinden bağlı MicroSD kart ile **Pico 2'nin RAM sınırını (520 KB) kat kat aşan (1.000.000 bayt / 1 MB)** devasa 3D sanal sahneleri sadece **16 KB RAM** kullanarak işleyen **Sanal Bellek / Sayfalama (LRU Page Cache)** mimarisi.
+This Raspberry Pi Pico 2 (RP2350) experiment renders a large ASCII 3D scene
+through a 32-slot LRU page cache. The virtual canvas is 1,000 × 1,000 bytes,
+while only 16 KiB of framebuffer pages stay in RAM. Dirty pages are stored on a
+MicroSD card through SPI0.
 
----
+This is a hardware experiment, not a general-purpose filesystem or swap
+implementation. The SD card region is addressed as raw sectors.
 
-## 🎯 Temel Mimari & Nasıl Çalışır?
+> [!CAUTION]
+> The demo writes sectors starting at LBA 4096 and formats 1,954 sectors after
+> explicit serial confirmation. Use a dedicated, disposable test card or a
+> reserved raw region. Never point it at a card containing a filesystem or
+> irreplaceable data.
 
-* **Devasa Sanal Tuval:** 1000 × 1000 Karakter (1.000.000 Bayt = 1.00 MB / 1954 Sektör).
-* **Fiziksel RAM Kullanımı:** Sadece 16 KB (32 adet 512 baytlık LRU sayfa havuzu).
-* **İkincil Bellek (Swap):** 2 GB MicroSD Kart (SPI0, 20 MHz Yüksek Hız).
-* **Sayfalama Mekanizması:**
-  1. Render motoru piksel yazdığında/okuduğunda hedef adresin hangi 512 baytlık SD sektörüne denk geldiği bulunur.
-  2. **Cache Hit:** Hedef sektör RAM'deki 32 sayfadan birindeyse anında erişilir.
-  3. **Cache Miss:** RAM'deki en eski kullanılmayan sayfa (LRU) eğer değiştirildiyse (dirty) SD karta geri yazılır (Write-Back), ardından talep edilen sektör SD karttan RAM'e yüklenir (Page-In).
+## Hardware
 
----
+| MicroSD signal | Pico 2 pin | Function |
+|---|---:|---|
+| MISO | GP16 | SPI0 RX |
+| CS | GP17 | Chip select |
+| SCK | GP18 | SPI0 clock |
+| MOSI | GP19 | SPI0 TX |
+| VCC | 3V3(OUT) | 3.3 V supply |
+| GND | GND | Common ground |
 
-## 🔌 Donanım & SPI0 Bağlantı Şeması
+The driver supports SDSC and SDHC cards. The card must have at least
+`4096 + 1954` addressable sectors. The demo does not create or preserve a
+filesystem in the reserved region.
 
-| MicroSD Kart Modülü | Pico 2 (RP2350) Pini | İşlev |
-| :--- | :--- | :--- |
-| **MISO (DO)** | **GP16** | SPI0 RX (Dahili Pull-up) |
-| **CS (SS)** | **GP17** | Yazılımsal GPIO OUT |
-| **SCK (CLK)** | **GP18** | SPI0 Clock (20 MHz) |
-| **MOSI (DI)** | **GP19** | SPI0 TX |
-| **VCC** | **3V3(OUT)** | 3.3V Besleme |
-| **GND** | **GND** | Ortak Toprak |
+## Build
 
-* **Desteklenen Kartlar:** SDSC (<= 2GB, Byte-Addressed) ve SDHC/SDXC (> 2GB, Block-Addressed) otomatik algılanır.
-
----
-
-## 📂 Proje Yapısı
-
-```
-.
-├── .gitignore
-├── README.md
-└── pico2_cube_demo/
-    ├── CMakeLists.txt          # Donanımsal SPI0 ve Pico SDK yapılandırması
-    ├── main.c                  # Out-of-Core 3D dünya oluşturucu & Viewport kamera gezgini
-    ├── sd_spi.h / sd_spi.c     # Ham, hafif, yüksek hızlı (20MHz) SPI0 SDSC/SDHC sürücüsü
-    ├── vmem_fb.h / vmem_fb.c   # 32-slot LRU Page Cache Sanal Bellek yöneticisi
-    └── pico_sdk_import.cmake
-```
-
----
-
-## 🛠️ Derleme
+Install CMake, a C compiler, and the ARM GNU toolchain, then use the pinned
+Pico SDK release:
 
 ```bash
-cd pico2_cube_demo
-mkdir -p build
-cd build
-cmake -DPICO_BOARD=pico2 ..
-make -j$(nproc)
+cmake -S pico2_cube_demo -B build \
+  -DPICO_BOARD=pico2 \
+  -DPICO_SDK_FETCH_FROM_GIT=ON \
+  -DPICO_SDK_FETCH_FROM_GIT_TAG=2.1.1
+cmake --build build --parallel
 ```
 
-Derleme çıktısı: `build/pico2_cube_demo.uf2`
+The generated `build/pico2_cube_demo.uf2` can be copied with `picotool` or
+dragged to the board's BOOTSEL volume. Do not commit generated binaries.
 
----
+## Run safely
 
-## 🚀 Yükleme ve Çalıştırma
+1. Confirm wiring and insert a dedicated test card.
+2. Flash the UF2 and connect the USB CDC serial console at 115200 baud.
+3. Read the capacity and raw-sector warning printed by the firmware.
+4. Type exactly `ERASE` followed by Enter only after verifying the card and
+   reserved region.
 
-1. Pico 2'yi **BOOTSEL** butonuna basılı tutarak bağlayın.
-2. UF2 dosyasını yükleyin:
-   ```bash
-   cp /home/berat/Desktop/picotest/pico2_cube_demo/build/pico2_cube_demo.uf2 /run/media/$USER/RP2350/
-   ```
-3. Terminal üzerinden seri porta bağlanın (**80×35** boyut önerilir):
-   ```bash
-   minicom -D /dev/ttyACM0 -b 115200
-   # veya
-   screen /dev/ttyACM0 115200
-   ```
+Without that confirmation the firmware refuses to format or generate the
+world. After generation, the viewport continuously reads the SD-backed canvas.
+
+## Tests
+
+The host test replaces the SD and Pico timing APIs with an in-memory sector
+store. It verifies page mapping, cache hits, dirty eviction, flush behavior,
+and out-of-bounds reads without requiring a board or SD card:
+
+```bash
+make -C tests
+./tests/test_vmem_fb
+```
+
+GitHub Actions runs this host test and a pinned Pico SDK cross-build.
+
+## License
+
+[MIT](LICENSE)
