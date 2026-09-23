@@ -1,4 +1,5 @@
 #include "sd_spi.h"
+#include "sd_csd.h"
 #include <stdio.h>
 #include <string.h>
 
@@ -10,6 +11,7 @@
 #define CMD0_GO_IDLE_STATE           0
 #define CMD1_SEND_OP_COND            1
 #define CMD8_SEND_IF_COND            8
+#define CMD9_SEND_CSD                9
 #define CMD16_SET_BLOCKLEN           16
 #define CMD17_READ_SINGLE_BLOCK      17
 #define CMD24_WRITE_SINGLE_BLOCK     24
@@ -122,6 +124,28 @@ static uint8_t sd_cmd(uint8_t cmd, uint32_t arg, bool is_acmd, uint32_t *extra_r
 
     sd_cs_deselect();
     return r1;
+}
+
+static bool sd_read_csd(uint8_t csd[16]) {
+    sd_cs_select();
+    if (sd_cmd_spi(CMD9_SEND_CSD, 0) != 0x00) {
+        sd_cs_deselect();
+        return false;
+    }
+    uint64_t start = time_us_64();
+    uint8_t token = 0xff;
+    while (time_us_64() - start < 200000ULL) {
+        token = sd_spi_transfer_byte(0xff);
+        if (token != 0xff) break;
+    }
+    bool ok = token == 0xfe;
+    if (ok) {
+        ok = spi_read_blocking(SD_SPI_PORT, 0xff, csd, 16) == 16;
+        sd_spi_transfer_byte(0xff); // CRC
+        sd_spi_transfer_byte(0xff);
+    }
+    sd_cs_deselect();
+    return ok;
 }
 
 bool sd_spi_init(void) {
@@ -281,6 +305,9 @@ bool sd_spi_init(void) {
                 g_card_info.type = SD_TYPE_SDSC_V2;
                 printf("[SD] Card Type: SDSC v2.0 (Byte-Addressed, <=2GB)\n");
             }
+        } else {
+            printf("[SD] ERROR: Post-init OCR read failed (R1: 0x%02X)\n", r1);
+            return false;
         }
     } else {
         g_card_info.type = SD_TYPE_SDSC_V1;
@@ -292,11 +319,24 @@ bool sd_spi_init(void) {
         printf("[SD] Setting Block Length to 512 bytes (CMD16)...\n");
         r1 = sd_cmd(CMD16_SET_BLOCKLEN, SD_SECTOR_SIZE, false, NULL);
         if (r1 != 0x00) {
-            printf("[SD] WARNING: CMD16 SET_BLOCKLEN returned 0x%02X\n", r1);
+            printf("[SD] ERROR: CMD16 SET_BLOCKLEN returned 0x%02X\n", r1);
+            return false;
         } else {
             printf("[SD] Block length configured: 512 Bytes (LBA Sector Mode)\n");
         }
     }
+
+    uint8_t csd[16];
+    if (!sd_read_csd(csd) || !sd_csd_capacity_sectors(csd, &g_card_info.capacity_sectors)) {
+        printf("[SD] ERROR: Could not read a valid CSD capacity.\n");
+        return false;
+    }
+    if ((g_card_info.type == SD_TYPE_SDHC) != ((csd[0] >> 6) == 1)) {
+        printf("[SD] ERROR: CSD structure disagrees with card addressing mode.\n");
+        return false;
+    }
+    printf("[SD] Capacity: %llu sectors (512 bytes each)\n",
+           (unsigned long long)g_card_info.capacity_sectors);
 
     // 11. Switch SPI to High-Speed (20 MHz) ONLY after full initialization
     uint fast_baud = spi_set_baudrate(SD_SPI_PORT, SD_FAST_BAUD);
@@ -310,7 +350,8 @@ bool sd_spi_init(void) {
 }
 
 bool sd_read_sector(uint32_t sector_lba, uint8_t *buffer) {
-    if (!g_card_info.initialized || buffer == NULL) return false;
+    if (!g_card_info.initialized || buffer == NULL ||
+        sector_lba >= g_card_info.capacity_sectors) return false;
 
     // SDSC uses byte addressing (sector * 512), SDHC uses sector LBA directly
     uint32_t addr = (g_card_info.type == SD_TYPE_SDHC) ? sector_lba : (sector_lba * SD_SECTOR_SIZE);
@@ -338,7 +379,10 @@ bool sd_read_sector(uint32_t sector_lba, uint8_t *buffer) {
     }
 
     // Read 512 bytes of data
-    spi_read_blocking(SD_SPI_PORT, 0xFF, buffer, SD_SECTOR_SIZE);
+    if (spi_read_blocking(SD_SPI_PORT, 0xFF, buffer, SD_SECTOR_SIZE) != SD_SECTOR_SIZE) {
+        sd_cs_deselect();
+        return false;
+    }
 
     // Read and discard 2 bytes CRC
     sd_spi_transfer_byte(0xFF);
@@ -349,7 +393,8 @@ bool sd_read_sector(uint32_t sector_lba, uint8_t *buffer) {
 }
 
 bool sd_write_sector(uint32_t sector_lba, const uint8_t *buffer) {
-    if (!g_card_info.initialized || buffer == NULL) return false;
+    if (!g_card_info.initialized || buffer == NULL ||
+        sector_lba >= g_card_info.capacity_sectors) return false;
 
     uint32_t addr = (g_card_info.type == SD_TYPE_SDHC) ? sector_lba : (sector_lba * SD_SECTOR_SIZE);
 
@@ -365,7 +410,10 @@ bool sd_write_sector(uint32_t sector_lba, const uint8_t *buffer) {
     sd_spi_transfer_byte(0xFE);
 
     // Write 512 bytes payload
-    spi_write_blocking(SD_SPI_PORT, buffer, SD_SECTOR_SIZE);
+    if (spi_write_blocking(SD_SPI_PORT, buffer, SD_SECTOR_SIZE) != SD_SECTOR_SIZE) {
+        sd_cs_deselect();
+        return false;
+    }
 
     // Send 2 bytes dummy CRC
     sd_spi_transfer_byte(0xFF);

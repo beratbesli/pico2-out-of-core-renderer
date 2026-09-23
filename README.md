@@ -58,13 +58,14 @@ world. After generation, the viewport continuously reads the SD-backed canvas.
 
 ## Tests
 
-The host test replaces the SD and Pico timing APIs with an in-memory sector
-store. It verifies page mapping, cache hits, dirty eviction, flush behavior,
-and out-of-bounds reads without requiring a board or SD card:
+The host tests parse SD CSD capacity and replace the SD and Pico timing APIs
+with an in-memory sector store. They verify page mapping, cache hits, dirty
+eviction, failed I/O, flush behavior, and out-of-bounds reads without a board:
 
 ```bash
 make -C tests
 ./tests/test_vmem_fb
+./tests/test_sd_csd
 ```
 
 GitHub Actions runs this host test and a pinned Pico SDK cross-build.
