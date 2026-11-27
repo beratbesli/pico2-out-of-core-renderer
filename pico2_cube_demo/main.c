@@ -45,7 +45,7 @@ static char terminal_buf[VIEWPORT_HEIGHT][VIEWPORT_WIDTH];
 static char output_str[16384];
 
 // Draw a 3D wireframe cube directly into the Virtual Memory space
-static void vmem_render_3d_cube(int center_x, int center_y, float size, float rx, float ry, float rz, char ch) {
+static bool vmem_render_3d_cube(int center_x, int center_y, float size, float rx, float ry, float rz, char ch) {
     static const float base_v[8][3] = {
         {-1,-1,-1}, {1,-1,-1}, {1,1,-1}, {-1,1,-1},
         {-1,-1,1},  {1,-1,1},  {1,1,1},  {-1,1,1}
@@ -86,29 +86,30 @@ static void vmem_render_3d_cube(int center_x, int center_y, float size, float rx
     for (int i = 0; i < 12; i++) {
         int i0 = edges[i][0];
         int i1 = edges[i][1];
-        vmem_draw_line(px[i0], py[i0], px[i1], py[i1], ch);
+        if (!vmem_draw_line(px[i0], py[i0], px[i1], py[i1], ch)) return false;
     }
+    return true;
 }
 
 // Generate a massive 1,000,000 byte 3D landscape on the SD card
-static void generate_massive_world(void) {
+static bool generate_massive_world(void) {
     printf("[RENDER] >>> Phase 1: Formatting 1,000,000 byte Canvas on MicroSD <<<\n");
-    vmem_clear(' ');
+    if (!vmem_clear(' ')) return false;
 
     // 1. Draw outer boundary box (1000 x 1000)
     printf("[RENDER] >>> Phase 2: Drawing 1000x1000 Boundary Box <<<\n");
-    vmem_draw_box(0, 0, VMEM_WIDTH, VMEM_HEIGHT);
+    if (!vmem_draw_box(0, 0, VMEM_WIDTH, VMEM_HEIGHT)) return false;
 
     // 2. Draw coordinate grid lines every 100 characters
     printf("[RENDER] >>> Phase 3: Drawing Grid Coordinate Matrix <<<\n");
     for (int x = 100; x < VMEM_WIDTH; x += 100) {
         for (int y = 10; y < VMEM_HEIGHT - 10; y += 4) {
-            vmem_put_pixel(x, y, ':');
+            if (!vmem_put_pixel(x, y, ':')) return false;
         }
     }
     for (int y = 100; y < VMEM_HEIGHT; y += 100) {
         for (int x = 10; x < VMEM_WIDTH - 10; x += 4) {
-            vmem_put_pixel(x, y, '-');
+            if (!vmem_put_pixel(x, y, '-')) return false;
         }
     }
 
@@ -119,11 +120,12 @@ static void generate_massive_world(void) {
         for (int gx = 150; gx < VMEM_WIDTH - 100; gx += 200) {
             float size = 25.0f + 10.0f * sinf((float)(gx + gy) * 0.05f);
             float angle = (float)(gx * 3 + gy * 7) * 0.02f;
-            vmem_render_3d_cube(gx, gy, size, angle, angle * 1.5f, angle * 0.7f, '#');
+            if (!vmem_render_3d_cube(gx, gy, size, angle, angle * 1.5f,
+                                     angle * 0.7f, '#')) return false;
 
             char label[32];
             snprintf(label, sizeof(label), "[SECTOR %03d,%03d]", gx, gy);
-            vmem_draw_string(gx - 8, gy + (int)size + 3, label);
+            if (!vmem_draw_string(gx - 8, gy + (int)size + 3, label)) return false;
             cube_count++;
         }
     }
@@ -131,17 +133,18 @@ static void generate_massive_world(void) {
 
     // 4. Draw Center Mega Landmark
     printf("[RENDER] >>> Phase 5: Rendering Center Mega Landmark <<<\n");
-    vmem_draw_box(400, 420, 200, 160);
-    vmem_draw_string(410, 430, "=== PICO 2 (RP2350) OUT-OF-CORE VIRTUAL MEMORY ===");
-    vmem_draw_string(410, 445, "CANVAS SIZE : 1000 x 1000 CHARACTERS (1.00 MEGABYTE)");
-    vmem_draw_string(410, 460, "RAM FOOTPRINT : ONLY 16 KB (32-PAGE LRU CACHE)");
-    vmem_draw_string(410, 475, "SECONDARY DISK: 2GB SPI0 MICROSD CARD @ 20 MHz");
-    vmem_render_3d_cube(500, 520, 35.0f, 0.6f, 0.8f, 0.4f, '@');
+    if (!vmem_draw_box(400, 420, 200, 160) ||
+        !vmem_draw_string(410, 430, "=== PICO 2 (RP2350) OUT-OF-CORE VIRTUAL MEMORY ===") ||
+        !vmem_draw_string(410, 445, "CANVAS SIZE : 1000 x 1000 CHARACTERS (1.00 MEGABYTE)") ||
+        !vmem_draw_string(410, 460, "RAM FOOTPRINT : ONLY 16 KB (32-PAGE LRU CACHE)") ||
+        !vmem_draw_string(410, 475, "SECONDARY DISK: SPI0 MICROSD CARD @ 20 MHz") ||
+        !vmem_render_3d_cube(500, 520, 35.0f, 0.6f, 0.8f, 0.4f, '@')) return false;
 
     // 5. Commit all modified pages to MicroSD card
     printf("[RENDER] >>> Phase 6: Committing all modified pages to MicroSD <<<\n");
-    vmem_flush();
+    if (!vmem_flush()) return false;
     printf("[RENDER] >>> Virtual World Generation Successfully Finished! <<<\n");
+    return true;
 }
 
 int main(void) {
@@ -194,7 +197,7 @@ int main(void) {
 
     // 4. Validate capacity before reserving the raw sector region.
     sd_card_info_t sd_info = sd_get_info();
-    if (sd_info.capacity_sectors < VMEM_BASE_SD_SECTOR + VMEM_TOTAL_PAGES) {
+    if (sd_info.capacity_sectors < (uint64_t)VMEM_BASE_SD_SECTOR + VMEM_TOTAL_PAGES) {
         printf("[ERROR] SD card is too small for the reserved virtual canvas.\n");
         while (1) {
             sleep_ms(1000);
@@ -210,7 +213,10 @@ int main(void) {
             sleep_ms(1000);
         }
     }
-    generate_massive_world();
+    if (!generate_massive_world()) {
+        printf("[ERROR] SD I/O failed; world generation stopped. Dirty pages remain in RAM where possible.\n");
+        while (1) sleep_ms(1000);
+    }
 
     // 7. Camera animation parameters
     float cam_t = 0.0f;
@@ -236,7 +242,11 @@ int main(void) {
         // This triggers Page-In / LRU Cache hits & misses dynamically!
         for (int y = 0; y < VIEWPORT_HEIGHT; y++) {
             for (int x = 0; x < VIEWPORT_WIDTH; x++) {
-                terminal_buf[y][x] = vmem_get_pixel(cam_x + x, cam_y + y);
+                if (!vmem_get_pixel(cam_x + x, cam_y + y,
+                                    &terminal_buf[y][x])) {
+                    printf("[ERROR] SD read failed; viewport stopped.\n");
+                    while (1) sleep_ms(1000);
+                }
             }
         }
 

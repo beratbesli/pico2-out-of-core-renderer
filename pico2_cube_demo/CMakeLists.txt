@@ -16,6 +16,7 @@ pico_sdk_init()
 add_executable(pico2_cube_demo
     main.c
     sd_spi.c
+    sd_csd.c
     vmem_fb.c
 )
 

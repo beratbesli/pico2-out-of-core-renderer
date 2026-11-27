@@ -25,7 +25,7 @@ typedef enum {
 typedef struct {
     bool           initialized;
     sd_card_type_t type;
-    uint32_t       capacity_sectors;
+    uint64_t       capacity_sectors;
     uint32_t       spi_baudrate;
 } sd_card_info_t;
 

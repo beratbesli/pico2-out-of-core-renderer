@@ -19,7 +19,9 @@ jobs:
       - name: Build host test
         run: make -C tests
       - name: Run host test
-        run: ./tests/test_vmem_fb
+        run: |
+          ./tests/test_vmem_fb
+          ./tests/test_sd_csd
 
   pico-build:
     runs-on: ubuntu-latest

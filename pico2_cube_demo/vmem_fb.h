@@ -27,13 +27,13 @@ typedef struct {
 
 // API
 bool         vmem_init(uint32_t base_sd_sector);
-void         vmem_clear(char fill_char);
-void         vmem_put_pixel(int x, int y, char ch);
-char         vmem_get_pixel(int x, int y);
-void         vmem_draw_line(int x0, int y0, int x1, int y1, char ch);
-void         vmem_draw_string(int x, int y, const char *str);
-void         vmem_draw_box(int x, int y, int w, int h);
-void         vmem_flush(void);
+bool         vmem_clear(char fill_char);
+bool         vmem_put_pixel(int x, int y, char ch);
+bool         vmem_get_pixel(int x, int y, char *ch);
+bool         vmem_draw_line(int x0, int y0, int x1, int y1, char ch);
+bool         vmem_draw_string(int x, int y, const char *str);
+bool         vmem_draw_box(int x, int y, int w, int h);
+bool         vmem_flush(void);
 vmem_stats_t vmem_get_stats(void);
 void         vmem_reset_stats(void);
 
